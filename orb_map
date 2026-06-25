@@ -1,0 +1,69 @@
+import cv2
+import numpy as np
+
+gst = (
+    "nvarguscamerasrc ! "
+    "video/x-raw(memory:NVMM), width=1280, height=720, format=NV12, framerate=30/1 ! "
+    "nvvidconv flip-method=0 ! "
+    "video/x-raw, width=640, height=480, format=BGRx ! "
+    "videoconvert ! "
+    "video/x-raw, format=BGR ! appsink"
+)
+
+cap = cv2.VideoCapture(gst, cv2.CAP_GSTREAMER)
+
+orb = cv2.ORB_create(nfeatures=1500, fastThreshold=5)
+bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+ret, prev_frame = cap.read()
+if not ret:
+    print("Camera failed")
+    exit()
+
+prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
+kp1, des1 = orb.detectAndCompute(prev_gray, None)
+
+x, y = 300, 300
+trajectory = np.zeros((600, 600, 3), dtype=np.uint8)
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        print("Frame failed")
+        break
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    kp2, des2 = orb.detectAndCompute(gray, None)
+
+    if des1 is not None and des2 is not None and len(kp1) > 10 and len(kp2) > 10:
+        matches = bf.match(des1, des2)
+        matches = sorted(matches, key=lambda m: m.distance)[:50]
+
+        dx_list = []
+        dy_list = []
+
+        for m in matches:
+            p1 = kp1[m.queryIdx].pt
+            p2 = kp2[m.trainIdx].pt
+
+            dx_list.append(p2[0] - p1[0])
+            dy_list.append(p2[1] - p1[1])
+
+        if len(dx_list) > 0:
+            dx = np.mean(dx_list)
+            dy = np.mean(dy_list)
+
+            x -= int(dx * 0.2)
+            y -= int(dy * 0.2)
+
+            cv2.circle(trajectory, (x, y), 2, (0, 255, 0), -1)
+
+            print("Keypoints:", len(kp2), "Matches:", len(matches), "Robot map position:", x, y)
+
+    else:
+        print("Not enough features. Keypoints:", len(kp2))
+
+    prev_gray = gray
+    kp1, des1 = kp2, des2
+
+    cv2.imwrite("map_output.jpg", trajectory)
